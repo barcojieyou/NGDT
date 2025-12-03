@@ -1,45 +1,61 @@
+#!/usr/bin/env python3
 """
-Visualization module for experiment results
+Visualization module for NGD-T experiment results
 """
+import argparse
+import json
+import glob
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from pathlib import Path
-import json
-import glob
-from typing import List, Dict, Any
-import argparse
-
-sns.set_style("whitegrid")
-plt.rcParams['figure.figsize'] = [12, 8]
-plt.rcParams['font.size'] = 12
+from matplotlib.lines import Line2D
 
 
 class ExperimentVisualizer:
     """Visualize experiment results"""
     
-    def __init__(self, result_dirs: List[Path]):
+    def __init__(self, result_dirs: List[Path], output_dir: Optional[Path] = None):
         self.result_dirs = result_dirs
+        self.output_dir = output_dir or Path("visualizations")
+        self.output_dir.mkdir(exist_ok=True)
+        
         self.data = {}
         self.summary_data = []
         
     def load_all_data(self):
         """Load data from all experiment directories"""
+        print(f"Loading data from {len(self.result_dirs)} directories...")
+        
         for result_dir in self.result_dirs:
             try:
-                # Load step logs
-                step_csv = next(result_dir.glob("step_logs_*.csv"))
-                step_df = pd.read_csv(step_csv)
-                
-                # Load epoch logs
-                epoch_csv = next(result_dir.glob("epoch_logs_*.csv"))
-                epoch_df = pd.read_csv(epoch_csv)
-                
                 # Load config
                 config_file = result_dir / "config.json"
+                if not config_file.exists():
+                    print(f"Warning: No config file in {result_dir}")
+                    continue
+                
                 with open(config_file) as f:
                     config = json.load(f)
+                
+                # Load step logs
+                step_files = list(result_dir.glob("step_logs_*.csv"))
+                if not step_files:
+                    print(f"Warning: No step logs in {result_dir}")
+                    continue
+                
+                step_df = pd.read_csv(step_files[0])
+                
+                # Load epoch logs
+                epoch_files = list(result_dir.glob("epoch_logs_*.csv"))
+                if not epoch_files:
+                    print(f"Warning: No epoch logs in {result_dir}")
+                    continue
+                
+                epoch_df = pd.read_csv(epoch_files[0])
                 
                 # Create experiment identifier
                 exp_id = f"{config['method']}_{config['model']}_{config['dataset']}_run{config['run_id']}"
@@ -47,213 +63,318 @@ class ExperimentVisualizer:
                 self.data[exp_id] = {
                     'step_df': step_df,
                     'epoch_df': epoch_df,
-                    'config': config
+                    'config': config,
+                    'directory': result_dir,
                 }
                 
                 # Extract summary
                 summary = self._extract_summary(exp_id, step_df, epoch_df, config)
                 self.summary_data.append(summary)
                 
+                print(f"  Loaded: {exp_id}")
+                
             except Exception as e:
                 print(f"Error loading {result_dir}: {e}")
-    
-    def _extract_summary(self, exp_id, step_df, epoch_df, config):
-        """Extract summary statistics"""
-        best_epoch = epoch_df.loc[epoch_df['val_acc'].idxmax()]
         
-        return {
+        print(f"Successfully loaded {len(self.data)} experiments")
+    
+    def _extract_summary(self, exp_id: str, step_df: pd.DataFrame, 
+                        epoch_df: pd.DataFrame, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract summary statistics from experiment data"""
+        summary = {
             'exp_id': exp_id,
             'method': config['method'],
             'model': config['model'],
             'dataset': config['dataset'],
             'run_id': config['run_id'],
-            'final_train_loss': epoch_df['train_loss_avg'].iloc[-1],
-            'final_val_loss': epoch_df['val_loss'].iloc[-1],
-            'final_val_acc': epoch_df['val_acc'].iloc[-1],
-            'best_val_acc': best_epoch['val_acc'],
-            'best_epoch': int(best_epoch['epoch']),
-            'avg_delta_f': step_df['delta_f'].mean() if 'delta_f' in step_df.columns else 0,
-            'avg_eta_t': step_df['eta_t'].mean() if 'eta_t' in step_df.columns else config.get('lr', 0),
-            'total_steps': len(step_df),
+            'lr': config.get('lr', 0),
+            'batch_size': config.get('batch_size', 0),
+            'epochs': config.get('epochs', 0),
         }
+        
+        # Extract from epoch data
+        if 'val_acc' in epoch_df.columns and len(epoch_df) > 0:
+            summary['final_val_acc'] = epoch_df['val_acc'].iloc[-1]
+            summary['best_val_acc'] = epoch_df['val_acc'].max()
+            summary['best_epoch'] = int(epoch_df.loc[epoch_df['val_acc'].idxmax(), 'epoch'])
+        
+        if 'val_loss' in epoch_df.columns and len(epoch_df) > 0:
+            summary['final_val_loss'] = epoch_df['val_loss'].iloc[-1]
+            summary['best_val_loss'] = epoch_df['val_loss'].min()
+        
+        if 'train_loss_avg' in epoch_df.columns and len(epoch_df) > 0:
+            summary['final_train_loss'] = epoch_df['train_loss_avg'].iloc[-1]
+        
+        # Extract from step data
+        if 'delta_f' in step_df.columns and len(step_df) > 0:
+            summary['avg_delta_f'] = step_df['delta_f'].mean()
+            summary['final_delta_f'] = step_df['delta_f'].iloc[-1] if len(step_df) > 0 else 0
+        
+        if 'eta_t' in step_df.columns and len(step_df) > 0:
+            summary['avg_eta_t'] = step_df['eta_t'].mean()
+        
+        if 'grad_norm' in step_df.columns and len(step_df) > 0:
+            summary['avg_grad_norm'] = step_df['grad_norm'].mean()
+        
+        return summary
     
-    def plot_training_curves(self, save_path=None):
+    def plot_training_curves(self, figsize=(15, 10)):
         """Plot training curves for all experiments"""
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        if not self.data:
+            print("No data to plot")
+            return
         
-        # Group by method for better comparison
-        methods = set()
-        for exp_data in self.data.values():
-            methods.add(exp_data['config']['method'])
+        # Create figure
+        fig, axes = plt.subplots(2, 3, figsize=figsize)
         
+        # Color map by method
+        methods = list(set(exp_data['config']['method'] for exp_data in self.data.values()))
         colors = plt.cm.Set2(np.linspace(0, 1, len(methods)))
         method_colors = dict(zip(methods, colors))
         
+        # Plot each experiment
         for exp_id, exp_data in self.data.items():
             method = exp_data['config']['method']
             color = method_colors[method]
+            alpha = 0.7
             
-            # Plot training loss
-            axes[0, 0].plot(
-                exp_data['step_df']['step'],
-                exp_data['step_df']['train_loss'],
-                color=color, alpha=0.5, linewidth=0.5
-            )
+            step_df = exp_data['step_df']
+            epoch_df = exp_data['epoch_df']
             
-            # Plot validation accuracy
-            axes[0, 1].plot(
-                exp_data['epoch_df']['epoch'],
-                exp_data['epoch_df']['val_acc'],
-                color=color, alpha=0.7, linewidth=2
-            )
+            # Plot 1: Training loss (steps)
+            if 'step' in step_df.columns and 'train_loss' in step_df.columns:
+                axes[0, 0].plot(step_df['step'], step_df['train_loss'], 
+                               color=color, alpha=alpha*0.5, linewidth=0.5)
             
-            # Plot validation loss
-            axes[0, 2].plot(
-                exp_data['epoch_df']['epoch'],
-                exp_data['epoch_df']['val_loss'],
-                color=color, alpha=0.7, linewidth=2
-            )
+            # Plot 2: Validation accuracy (epochs)
+            if 'epoch' in epoch_df.columns and 'val_acc' in epoch_df.columns:
+                axes[0, 1].plot(epoch_df['epoch'], epoch_df['val_acc'], 
+                               color=color, alpha=alpha, linewidth=2)
             
-            # Plot Delta_F if available
-            if 'delta_f' in exp_data['step_df'].columns:
-                axes[1, 0].plot(
-                    exp_data['step_df']['step'],
-                    exp_data['step_df']['delta_f'],
-                    color=color, alpha=0.5, linewidth=0.5
-                )
+            # Plot 3: Validation loss (epochs)
+            if 'epoch' in epoch_df.columns and 'val_loss' in epoch_df.columns:
+                axes[0, 2].plot(epoch_df['epoch'], epoch_df['val_loss'], 
+                               color=color, alpha=alpha, linewidth=2)
             
-            # Plot eta_t if available
-            if 'eta_t' in exp_data['step_df'].columns:
-                axes[1, 1].plot(
-                    exp_data['step_df']['step'],
-                    exp_data['step_df']['eta_t'],
-                    color=color, alpha=0.7, linewidth=1
-                )
+            # Plot 4: Delta_F (steps) - if available
+            if 'step' in step_df.columns and 'delta_f' in step_df.columns:
+                axes[1, 0].plot(step_df['step'], step_df['delta_f'], 
+                               color=color, alpha=alpha*0.5, linewidth=0.5)
+                axes[1, 0].set_yscale('log')
             
-            # Plot gradient norm
-            if 'grad_norm' in exp_data['step_df'].columns:
-                axes[1, 2].plot(
-                    exp_data['step_df']['step'],
-                    exp_data['step_df']['grad_norm'],
-                    color=color, alpha=0.5, linewidth=0.5
-                )
+            # Plot 5: Learning rate (eta_t) (steps) - if available
+            if 'step' in step_df.columns and 'eta_t' in step_df.columns:
+                axes[1, 1].plot(step_df['step'], step_df['eta_t'], 
+                               color=color, alpha=alpha, linewidth=1)
+                axes[1, 1].set_yscale('log')
+            
+            # Plot 6: Gradient norm (steps) - if available
+            if 'step' in step_df.columns and 'grad_norm' in step_df.columns:
+                axes[1, 2].plot(step_df['step'], step_df['grad_norm'], 
+                               color=color, alpha=alpha*0.5, linewidth=0.5)
+                axes[1, 2].set_yscale('log')
         
         # Set titles and labels
-        axes[0, 0].set_title('Training Loss')
+        axes[0, 0].set_title('Training Loss (Steps)')
         axes[0, 0].set_xlabel('Step')
         axes[0, 0].set_ylabel('Loss')
         axes[0, 0].set_yscale('log')
+        axes[0, 0].grid(True, alpha=0.3)
         
-        axes[0, 1].set_title('Validation Accuracy')
+        axes[0, 1].set_title('Validation Accuracy (Epochs)')
         axes[0, 1].set_xlabel('Epoch')
         axes[0, 1].set_ylabel('Accuracy')
+        axes[0, 1].grid(True, alpha=0.3)
         
-        axes[0, 2].set_title('Validation Loss')
+        axes[0, 2].set_title('Validation Loss (Epochs)')
         axes[0, 2].set_xlabel('Epoch')
         axes[0, 2].set_ylabel('Loss')
         axes[0, 2].set_yscale('log')
+        axes[0, 2].grid(True, alpha=0.3)
         
-        axes[1, 0].set_title('Delta_F')
+        axes[1, 0].set_title('Delta_F (Steps)')
         axes[1, 0].set_xlabel('Step')
         axes[1, 0].set_ylabel('Delta_F')
-        axes[1, 0].set_yscale('log')
+        axes[1, 0].grid(True, alpha=0.3)
         
         axes[1, 1].set_title('Learning Rate (eta_t)')
         axes[1, 1].set_xlabel('Step')
         axes[1, 1].set_ylabel('Learning Rate')
-        axes[1, 1].set_yscale('log')
+        axes[1, 1].grid(True, alpha=0.3)
         
-        axes[1, 2].set_title('Gradient Norm')
+        axes[1, 2].set_title('Gradient Norm (Steps)')
         axes[1, 2].set_xlabel('Step')
-        axes[1, 2].set_ylabel('Gradient L2 Norm')
-        axes[1, 2].set_yscale('log')
+        axes[1, 2].set_ylabel('Gradient Norm')
+        axes[1, 2].grid(True, alpha=0.3)
         
         # Add legend
-        from matplotlib.lines import Line2D
-        legend_elements = [Line2D([0], [0], color=method_colors[method], lw=2, label=method) 
-                          for method in methods]
-        fig.legend(handles=legend_elements, loc='lower center', ncol=len(methods), bbox_to_anchor=(0.5, -0.05))
+        legend_elements = [Line2D([0], [0], color=method_colors[method], 
+                                 lw=2, label=method) for method in methods]
+        fig.legend(handles=legend_elements, loc='lower center', 
+                  ncol=min(len(methods), 4), bbox_to_anchor=(0.5, -0.05))
         
+        plt.suptitle('Training Curves Comparison', fontsize=16, y=1.02)
         plt.tight_layout()
         
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"Saved plot to {save_path}")
+        # Save figure
+        output_path = self.output_dir / 'training_curves.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
         
-        plt.show()
+        print(f"Saved training curves to {output_path}")
     
-    def plot_comparison_summary(self, save_path=None):
-        """Plot comparison summary across methods"""
+    def plot_method_comparison(self, figsize=(12, 8)):
+        """Plot method comparison summary"""
         if not self.summary_data:
+            print("No summary data to plot")
             return
         
         summary_df = pd.DataFrame(self.summary_data)
         
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        # Create figure
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
         
-        # 1. Final validation accuracy by method
-        sns.boxplot(data=summary_df, x='method', y='final_val_acc', ax=axes[0, 0])
-        axes[0, 0].set_title('Final Validation Accuracy by Method')
-        axes[0, 0].set_ylabel('Accuracy')
-        axes[0, 0].tick_params(axis='x', rotation=45)
+        # Plot 1: Final validation accuracy by method
+        if 'final_val_acc' in summary_df.columns:
+            sns.boxplot(data=summary_df, x='method', y='final_val_acc', ax=axes[0, 0])
+            axes[0, 0].set_title('Final Validation Accuracy by Method')
+            axes[0, 0].set_ylabel('Accuracy')
+            axes[0, 0].tick_params(axis='x', rotation=45)
         
-        # 2. Best validation accuracy by method
-        sns.boxplot(data=summary_df, x='method', y='best_val_acc', ax=axes[0, 1])
-        axes[0, 1].set_title('Best Validation Accuracy by Method')
-        axes[0, 1].set_ylabel('Best Accuracy')
-        axes[0, 1].tick_params(axis='x', rotation=45)
+        # Plot 2: Best validation accuracy by method
+        if 'best_val_acc' in summary_df.columns:
+            sns.boxplot(data=summary_df, x='method', y='best_val_acc', ax=axes[0, 1])
+            axes[0, 1].set_title('Best Validation Accuracy by Method')
+            axes[0, 1].set_ylabel('Best Accuracy')
+            axes[0, 1].tick_params(axis='x', rotation=45)
         
-        # 3. Convergence speed (epoch to best accuracy)
-        sns.boxplot(data=summary_df, x='method', y='best_epoch', ax=axes[0, 2])
-        axes[0, 2].set_title('Convergence Speed by Method')
-        axes[0, 2].set_ylabel('Epoch to Best Accuracy')
-        axes[0, 2].tick_params(axis='x', rotation=45)
+        # Plot 3: Convergence speed
+        if 'best_epoch' in summary_df.columns:
+            sns.boxplot(data=summary_df, x='method', y='best_epoch', ax=axes[1, 0])
+            axes[1, 0].set_title('Convergence Speed (Epoch to Best Accuracy)')
+            axes[1, 0].set_ylabel('Epoch')
+            axes[1, 0].tick_params(axis='x', rotation=45)
         
-        # 4. Average Delta_F by method
+        # Plot 4: Average Delta_F by method
         if 'avg_delta_f' in summary_df.columns:
-            summary_df_filtered = summary_df[summary_df['avg_delta_f'] > 0]
-            if len(summary_df_filtered) > 0:
-                sns.boxplot(data=summary_df_filtered, x='method', y='avg_delta_f', ax=axes[1, 0])
-                axes[1, 0].set_title('Average Delta_F by Method')
-                axes[1, 0].set_ylabel('Delta_F')
-                axes[1, 0].tick_params(axis='x', rotation=45)
-                axes[1, 0].set_yscale('log')
+            method_delta_f = summary_df.groupby('method')['avg_delta_f'].mean()
+            axes[1, 1].bar(method_delta_f.index, method_delta_f.values)
+            axes[1, 1].set_title('Average Delta_F by Method')
+            axes[1, 1].set_ylabel('Delta_F')
+            axes[1, 1].tick_params(axis='x', rotation=45)
+            axes[1, 1].set_yscale('log')
         
-        # 5. Average learning rate by method
-        if 'avg_eta_t' in summary_df.columns:
-            summary_df_filtered = summary_df[summary_df['avg_eta_t'] > 0]
-            if len(summary_df_filtered) > 0:
-                sns.boxplot(data=summary_df_filtered, x='method', y='avg_eta_t', ax=axes[1, 1])
-                axes[1, 1].set_title('Average Learning Rate by Method')
-                axes[1, 1].set_ylabel('Learning Rate')
-                axes[1, 1].tick_params(axis='x', rotation=45)
-                axes[1, 1].set_yscale('log')
-        
-        # 6. Training stability (loss variance)
-        # Calculate loss variance from step data
-        loss_variances = []
-        for exp_id, exp_data in self.data.items():
-            method = exp_data['config']['method']
-            loss_var = exp_data['step_df']['train_loss'].var()
-            loss_variances.append({'method': method, 'loss_variance': loss_var})
-        
-        if loss_variances:
-            loss_var_df = pd.DataFrame(loss_variances)
-            sns.boxplot(data=loss_var_df, x='method', y='loss_variance', ax=axes[1, 2])
-            axes[1, 2].set_title('Training Loss Variance by Method')
-            axes[1, 2].set_ylabel('Loss Variance')
-            axes[1, 2].tick_params(axis='x', rotation=45)
-            axes[1, 2].set_yscale('log')
-        
+        plt.suptitle('Method Comparison Summary', fontsize=16, y=1.02)
         plt.tight_layout()
         
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"Saved comparison plot to {save_path}")
+        # Save figure
+        output_path = self.output_dir / 'method_comparison.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
         
-        plt.show()
+        print(f"Saved method comparison to {output_path}")
     
-    def generate_report(self, save_path=None):
+    def plot_dataset_comparison(self, figsize=(12, 8)):
+        """Plot dataset comparison"""
+        if not self.summary_data:
+            print("No summary data to plot")
+            return
+        
+        summary_df = pd.DataFrame(self.summary_data)
+        
+        # Filter to have multiple datasets
+        datasets = summary_df['dataset'].unique()
+        if len(datasets) < 2:
+            print(f"Only one dataset found: {datasets[0]}")
+            return
+        
+        # Create figure
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
+        
+        # Plot accuracy by dataset and method
+        if 'final_val_acc' in summary_df.columns:
+            sns.barplot(data=summary_df, x='method', y='final_val_acc', 
+                       hue='dataset', ax=axes[0, 0])
+            axes[0, 0].set_title('Final Accuracy by Method and Dataset')
+            axes[0, 0].set_ylabel('Accuracy')
+            axes[0, 0].tick_params(axis='x', rotation=45)
+            axes[0, 0].legend(title='Dataset')
+        
+        # Plot convergence speed by dataset
+        if 'best_epoch' in summary_df.columns:
+            sns.barplot(data=summary_df, x='method', y='best_epoch', 
+                       hue='dataset', ax=axes[0, 1])
+            axes[0, 1].set_title('Convergence Speed by Method and Dataset')
+            axes[0, 1].set_ylabel('Epoch to Best Accuracy')
+            axes[0, 1].tick_params(axis='x', rotation=45)
+            axes[0, 1].legend(title='Dataset')
+        
+        # Plot training loss by dataset
+        if 'final_train_loss' in summary_df.columns:
+            sns.barplot(data=summary_df, x='method', y='final_train_loss', 
+                       hue='dataset', ax=axes[1, 0])
+            axes[1, 0].set_title('Final Training Loss by Method and Dataset')
+            axes[1, 0].set_ylabel('Loss')
+            axes[1, 0].tick_params(axis='x', rotation=45)
+            axes[1, 0].set_yscale('log')
+            axes[1, 0].legend(title='Dataset')
+        
+        # Plot validation loss by dataset
+        if 'final_val_loss' in summary_df.columns:
+            sns.barplot(data=summary_df, x='method', y='final_val_loss', 
+                       hue='dataset', ax=axes[1, 1])
+            axes[1, 1].set_title('Final Validation Loss by Method and Dataset')
+            axes[1, 1].set_ylabel('Loss')
+            axes[1, 1].tick_params(axis='x', rotation=45)
+            axes[1, 1].set_yscale('log')
+            axes[1, 1].legend(title='Dataset')
+        
+        plt.suptitle('Dataset Comparison', fontsize=16, y=1.02)
+        plt.tight_layout()
+        
+        # Save figure
+        output_path = self.output_dir / 'dataset_comparison.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Saved dataset comparison to {output_path}")
+    
+    def generate_summary_table(self):
+        """Generate summary table of all experiments"""
+        if not self.summary_data:
+            print("No data to generate summary")
+            return
+        
+        summary_df = pd.DataFrame(self.summary_data)
+        
+        # Group by method and dataset
+        grouped = summary_df.groupby(['method', 'dataset'])
+        
+        summary_stats = grouped.agg({
+            'final_val_acc': ['mean', 'std', 'count'],
+            'best_val_acc': ['mean', 'std'],
+            'best_epoch': ['mean', 'std'],
+        }).round(4)
+        
+        # Format for readability
+        summary_stats.columns = ['_'.join(col).strip() for col in summary_stats.columns.values]
+        
+        # Save to CSV
+        csv_path = self.output_dir / 'experiment_summary.csv'
+        summary_stats.to_csv(csv_path)
+        
+        # Save to Markdown
+        md_path = self.output_dir / 'experiment_summary.md'
+        with open(md_path, 'w') as f:
+            f.write("# Experiment Summary\n\n")
+            f.write(summary_stats.to_markdown())
+        
+        print(f"Saved summary table to {csv_path}")
+        print(f"Saved markdown summary to {md_path}")
+        
+        return summary_stats
+    
+    def generate_report(self):
         """Generate comprehensive report"""
         if not self.summary_data:
             print("No data to generate report")
@@ -261,99 +382,164 @@ class ExperimentVisualizer:
         
         summary_df = pd.DataFrame(self.summary_data)
         
-        report = []
-        report.append("=" * 80)
-        report.append("EXPERIMENT RESULTS SUMMARY")
-        report.append("=" * 80)
+        report_lines = []
+        report_lines.append("=" * 80)
+        report_lines.append("NGD-T EXPERIMENT REPORT")
+        report_lines.append("=" * 80)
         
-        # Overall statistics
-        report.append(f"\nTotal experiments: {len(summary_df)}")
-        report.append(f"Methods: {', '.join(summary_df['method'].unique())}")
-        report.append(f"Models: {', '.join(summary_df['model'].unique())}")
-        report.append(f"Datasets: {', '.join(summary_df['dataset'].unique())}")
+        # Basic statistics
+        report_lines.append(f"\nTotal experiments: {len(summary_df)}")
+        report_lines.append(f"Methods: {', '.join(summary_df['method'].unique())}")
+        report_lines.append(f"Models: {', '.join(summary_df['model'].unique())}")
+        report_lines.append(f"Datasets: {', '.join(summary_df['dataset'].unique())}")
         
         # Method comparison
-        report.append("\n" + "=" * 80)
-        report.append("METHOD COMPARISON")
-        report.append("=" * 80)
+        report_lines.append("\n" + "=" * 80)
+        report_lines.append("METHOD COMPARISON")
+        report_lines.append("=" * 80)
         
         for method in summary_df['method'].unique():
             method_df = summary_df[summary_df['method'] == method]
-            report.append(f"\n{method.upper()}:")
-            report.append(f"  Experiments: {len(method_df)}")
-            report.append(f"  Average final accuracy: {method_df['final_val_acc'].mean():.4f} ± {method_df['final_val_acc'].std():.4f}")
-            report.append(f"  Best accuracy: {method_df['best_val_acc'].max():.4f}")
-            report.append(f"  Average convergence epoch: {method_df['best_epoch'].mean():.1f}")
             
-            if 'avg_delta_f' in method_df.columns and method_df['avg_delta_f'].mean() > 0:
-                report.append(f"  Average Delta_F: {method_df['avg_delta_f'].mean():.2e}")
+            report_lines.append(f"\n{method.upper()}:")
+            report_lines.append(f"  Experiments: {len(method_df)}")
+            
+            if 'final_val_acc' in method_df.columns:
+                mean_acc = method_df['final_val_acc'].mean()
+                std_acc = method_df['final_val_acc'].std()
+                report_lines.append(f"  Final accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
+            
+            if 'best_val_acc' in method_df.columns:
+                best_acc = method_df['best_val_acc'].max()
+                report_lines.append(f"  Best accuracy: {best_acc:.4f}")
+            
+            if 'best_epoch' in method_df.columns:
+                mean_epoch = method_df['best_epoch'].mean()
+                report_lines.append(f"  Avg convergence epoch: {mean_epoch:.1f}")
         
         # Best performing experiments
-        report.append("\n" + "=" * 80)
-        report.append("TOP 5 EXPERIMENTS BY VALIDATION ACCURACY")
-        report.append("=" * 80)
+        report_lines.append("\n" + "=" * 80)
+        report_lines.append("TOP 5 EXPERIMENTS")
+        report_lines.append("=" * 80)
         
-        top5 = summary_df.nlargest(5, 'best_val_acc')
-        for i, (_, row) in enumerate(top5.iterrows()):
-            report.append(f"\n{i+1}. {row['exp_id']}")
-            report.append(f"   Best accuracy: {row['best_val_acc']:.4f}")
-            report.append(f"   Final accuracy: {row['final_val_acc']:.4f}")
-            report.append(f"   Converged at epoch: {row['best_epoch']}")
+        if 'best_val_acc' in summary_df.columns:
+            top5 = summary_df.nlargest(5, 'best_val_acc')
+            for i, (_, row) in enumerate(top5.iterrows(), 1):
+                report_lines.append(f"\n{i}. {row['method']} on {row['model']}/{row['dataset']} (run {row['run_id']})")
+                report_lines.append(f"   Best accuracy: {row['best_val_acc']:.4f}")
+                report_lines.append(f"   Final accuracy: {row['final_val_acc']:.4f}")
+                report_lines.append(f"   Learning rate: {row['lr']}")
+                report_lines.append(f"   Batch size: {row['batch_size']}")
+        
+        # Dataset comparison
+        report_lines.append("\n" + "=" * 80)
+        report_lines.append("DATASET COMPARISON")
+        report_lines.append("=" * 80)
+        
+        for dataset in summary_df['dataset'].unique():
+            dataset_df = summary_df[summary_df['dataset'] == dataset]
+            
+            report_lines.append(f"\n{dataset.upper()}:")
+            for method in dataset_df['method'].unique():
+                method_df = dataset_df[dataset_df['method'] == method]
+                if len(method_df) > 0 and 'final_val_acc' in method_df.columns:
+                    mean_acc = method_df['final_val_acc'].mean()
+                    report_lines.append(f"  {method}: {mean_acc:.4f}")
         
         # Save report
-        report_text = '\n'.join(report)
-        print(report_text)
+        report_text = '\n'.join(report_lines)
         
-        if save_path:
-            with open(save_path, 'w') as f:
-                f.write(report_text)
-            print(f"\nReport saved to {save_path}")
+        report_path = self.output_dir / 'experiment_report.txt'
+        with open(report_path, 'w') as f:
+            f.write(report_text)
+        
+        print(f"Saved report to {report_path}")
+        
+        # Print to console
+        print("\n" + report_text)
         
         return report_text
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize experiment results")
+    parser = argparse.ArgumentParser(description="Visualize NGD-T experiment results")
     parser.add_argument('--result-dir', type=str, help='Single result directory')
     parser.add_argument('--result-dirs', type=str, nargs='+', help='Multiple result directories')
     parser.add_argument('--pattern', type=str, help='Pattern to match result directories')
-    parser.add_argument('--out-dir', type=str, default='visualizations')
+    parser.add_argument('--batch-dir', type=str, help='Batch results directory')
+    parser.add_argument('--output-dir', type=str, default='visualizations', help='Output directory')
+    parser.add_argument('--all', action='store_true', help='Generate all visualizations')
+    parser.add_argument('--curves', action='store_true', help='Generate training curves')
+    parser.add_argument('--comparison', action='store_true', help='Generate method comparison')
+    parser.add_argument('--dataset-comp', action='store_true', help='Generate dataset comparison')
+    parser.add_argument('--summary', action='store_true', help='Generate summary table')
+    parser.add_argument('--report', action='store_true', help='Generate comprehensive report')
     
     args = parser.parse_args()
     
     # Find result directories
+    result_dirs = []
+    
     if args.result_dir:
-        result_dirs = [Path(args.result_dir)]
+        result_dirs.append(Path(args.result_dir))
     elif args.result_dirs:
-        result_dirs = [Path(d) for d in args.result_dirs]
+        result_dirs.extend([Path(d) for d in args.result_dirs])
     elif args.pattern:
-        result_dirs = [Path(p) for p in glob.glob(args.pattern)]
+        result_dirs.extend([Path(p) for p in glob.glob(args.pattern)])
+    elif args.batch_dir:
+        batch_dir = Path(args.batch_dir)
+        if batch_dir.exists():
+            # Find all experiment directories
+            for exp_dir in batch_dir.glob('*/*'):  # pattern: method_model_dataset_runX/YYYYMMDD_HHMMSS
+                if (exp_dir / 'config.json').exists():
+                    result_dirs.append(exp_dir)
     else:
-        # Default: look in batch_results
-        result_dirs = list(Path('batch_results').glob('*/*'))
+        # Default: look for individual experiment directories
+        default_patterns = ['results/*/*', 'batch_results/*/*']
+        for pattern in default_patterns:
+            result_dirs.extend([Path(p) for p in glob.glob(pattern)])
+    
+    if not result_dirs:
+        print("No result directories found")
+        return
     
     print(f"Found {len(result_dirs)} result directories")
     
     # Create visualizer
-    vis = ExperimentVisualizer(result_dirs)
-    vis.load_all_data()
+    visualizer = ExperimentVisualizer(result_dirs, Path(args.output_dir))
+    visualizer.load_all_data()
     
-    # Create output directory
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(exist_ok=True)
+    # Generate visualizations
+    if args.all or args.curves:
+        print("\nGenerating training curves...")
+        visualizer.plot_training_curves()
     
-    # Generate plots
-    if vis.data:
-        # Training curves
-        vis.plot_training_curves(save_path=out_dir / 'training_curves.png')
-        
-        # Comparison summary
-        vis.plot_comparison_summary(save_path=out_dir / 'comparison_summary.png')
-        
-        # Generate report
-        vis.generate_report(save_path=out_dir / 'experiment_report.txt')
-    else:
-        print("No valid experiment data found")
+    if args.all or args.comparison:
+        print("\nGenerating method comparison...")
+        visualizer.plot_method_comparison()
+    
+    if args.all or args.dataset_comp:
+        print("\nGenerating dataset comparison...")
+        visualizer.plot_dataset_comparison()
+    
+    if args.all or args.summary:
+        print("\nGenerating summary table...")
+        visualizer.generate_summary_table()
+    
+    if args.all or args.report:
+        print("\nGenerating comprehensive report...")
+        visualizer.generate_report()
+    
+    if not any([args.all, args.curves, args.comparison, args.dataset_comp, args.summary, args.report]):
+        # Default: generate all
+        print("\nGenerating all visualizations (default)...")
+        visualizer.plot_training_curves()
+        visualizer.plot_method_comparison()
+        visualizer.plot_dataset_comparison()
+        visualizer.generate_summary_table()
+        visualizer.generate_report()
+    
+    print(f"\nAll visualizations saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
