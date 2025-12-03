@@ -1,0 +1,76 @@
+# Default configuration for NGD-T experiments
+
+# Experiment settings
+experiment:
+  seed: 42
+  device: "cuda"  # or "cpu"
+  out_dir: "results"
+  
+# Data settings
+data:
+  dataset: "cifar10"
+  batch_size: 128
+  n_train: null  # null for full dataset
+  val_split: 0.1
+  
+# Model settings
+model:
+  name: "resnet18"
+  num_classes: 10
+  pretrained: false
+  
+# Optimizer settings
+optimizer:
+  # Common settings
+  lr: 0.1
+  weight_decay: 0.0005
+  damping: 1e-6
+  beta_f: 0.95
+  beta_mom: 0.9
+  
+  # SGD specific
+  momentum: 0.9
+  nesterov: false
+  
+  # Adam specific
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1e-8
+  amsgrad: false
+  
+  # NGD-T specific
+  Q_budget: 0.01
+  eta_min: 1e-6
+  eta_max: 1.0
+  eta_null_ratio: 0.001
+  
+  # K-FAC specific
+  update_freq: 10
+  kl_clip: 0.001
+  
+# Training settings
+training:
+  epochs: 100
+  scheduler: true
+  log_every: 50
+  eval_every: 200
+  ckpt_freq: 10
+  
+# Analysis settings
+analysis:
+  analyze_model: true
+  generate_plots: true
+  save_checkpoints: true
+  
+# Batch experiment settings
+batch:
+  num_runs: 3
+  num_workers: 2
+  out_dir: "batch_results"
+  
+# Visualization settings
+visualization:
+  output_dir: "visualizations"
+  figsize: [12, 8]
+  dpi: 300
+  style: "seaborn-whitegrid"
