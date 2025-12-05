@@ -15,5 +15,12 @@ def get_optimizer(optimizer_name, model, **kwargs):
     
     if optimizer_name not in optimizer_classes:
         raise ValueError(f"Unknown optimizer: {optimizer_name}. Available: {list(optimizer_classes.keys())}")
-    
-    return optimizer_classes[optimizer_name](model, **kwargs)
+
+        # 根据优化器类型过滤参数
+    if optimizer_name == 'sgd':
+        # SGD不需要beta_mom参数
+        filtered_kwargs = {k: v for k, v in kwargs.items()
+                          if k not in ['beta_mom', 'beta_sqr']}
+        return optimizer_classes[optimizer_name](model, **filtered_kwargs)
+    else:
+        return optimizer_classes[optimizer_name](model, **kwargs)

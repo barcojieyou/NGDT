@@ -239,8 +239,8 @@ def run_experiment(args):
     
     # Final evaluation and summary
     print("\nFinal evaluation...")
-    final_val_metrics = compute_metrics(model, val_loader, criterion, device, full=True)
-    final_test_metrics = compute_metrics(model, test_loader, criterion, device, full=True)
+    final_val_metrics = compute_metrics(model, val_loader, criterion, device)
+    final_test_metrics = compute_metrics(model, test_loader, criterion, device)
     
     final_metrics = {
         'final_val_loss': final_val_metrics['loss'],
