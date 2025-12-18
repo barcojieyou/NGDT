@@ -17,7 +17,7 @@ def create_experiment_grid() -> Dict[str, List[Any]]:
     grid = {
         'dataset': ['mnist', 'cifar10'],
         'model': ['tinycnn', 'resnet18'],
-        'method': ['sgd', 'adam', 'ngdt_emp'],
+        'method': ['sgd', 'adam', 'ngdt_emp', 'ngdt_kfac'],
         'lr': [0.1, 0.01, 0.001],
         'batch_size': [64, 128],
         'epochs': [50, 100],
