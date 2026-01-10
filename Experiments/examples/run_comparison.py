@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def run_comparison():
     """Run comparison between SGD, Adam, and NGD-T"""
-    methods = ['sgd', 'adam', 'ngdt_emp']
+    methods = ['sgd', 'adam', 'ngdt_emp', 'ngdt_kfac']
     results = []
     
     print("Running optimizer comparison...")
@@ -29,14 +29,14 @@ def run_comparison():
             '--run-id', '0',
             '--epochs', '20',  # Reduced for demo
             '--batch-size', '128',
-            '--lr', '0.1' if method == 'sgd' else '0.001' if method == 'adam' else '1.0',
+            '--lr', '0.01',
             '--log-every', '50',
             '--eval-every', '100',
             '--out-dir', 'comparison_results',
             '--scheduler',  # Use scheduler for SGD/Adam
         ]
         
-        if method == 'ngdt_emp':
+        if method == 'ngdt_emp' or method == 'ngdt_kfac':
             cmd.extend(['--Q-budget', '0.01'])
         
         print(f"Command: {' '.join(cmd)}")
