@@ -46,6 +46,9 @@ class SGDOptimizer(BaseOptimizer):
         # Compute gradients
         loss.backward()
         
+        # 在zero_grad前保存梯度范数
+        self.compute_and_save_grad_norm()
+
         # Update parameters
         self.optimizer.step()
         

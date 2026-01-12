@@ -38,6 +38,18 @@ class BaseOptimizer(ABC):
         
         # Diagnostics
         self.metrics_history = []
+
+    def compute_and_save_grad_norm(self) -> float:
+        """计算并保存梯度范数，应在zero_grad前调用"""
+        self.current_grad_norm = self._compute_current_grad_norm()
+        return self.current_grad_norm
+    
+    def _compute_grad_norm(self) -> float:
+        """重写：返回保存的梯度范数"""
+        if hasattr(self, 'current_grad_norm'):
+            return self.current_grad_norm
+        # 后备：实时计算（可能为0）
+        return super()._compute_current_grad_norm()
         
     @abstractmethod
     def step(self, loss: torch.Tensor) -> Dict[str, float]:
@@ -63,7 +75,7 @@ class BaseOptimizer(ABC):
         
         return diagnostics
     
-    def _compute_grad_norm(self) -> float:
+    def _compute_current_grad_norm(self) -> float:
         """Compute gradient L2 norm"""
         total_norm = 0.0
         for p in self.params:

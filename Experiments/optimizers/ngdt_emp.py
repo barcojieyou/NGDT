@@ -42,13 +42,16 @@ class NGDT_EmpiricalOptimizer(BaseOptimizer):
         
         # Compute gradients
         loss.backward()
-        
+
+        # 在zero_grad前保存梯度范数
+        self.compute_and_save_grad_norm()
+
         # Apply weight decay
         self.apply_weight_decay()
-        
+
         # Update empirical Fisher
         self.update_empirical_fisher()
-        
+
         # Compute Delta_F and natural gradients
         delta_f, per_layer, g_nat_list = self.compute_delta_f()
         self.current_delta_f = delta_f

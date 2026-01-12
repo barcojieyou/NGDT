@@ -9,3 +9,4 @@ tqdm
 pyyaml
 scipy
 jupyter
+tabulate
