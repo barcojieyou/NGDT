@@ -86,6 +86,9 @@ class NGDT_KFACOptimizer(BaseOptimizer):
         
         # Compute gradients
         loss.backward()
+
+        # 在zero_grad前保存梯度范数
+        self.compute_and_save_grad_norm()
         
         # Apply weight decay
         self.apply_weight_decay()

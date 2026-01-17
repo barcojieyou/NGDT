@@ -27,9 +27,9 @@ def run_comparison():
             '--model', 'resnet18',
             '--method', method,
             '--run-id', '0',
-            '--epochs', '20',  # Reduced for demo
+            '--epochs', '100',  # Reduced for demo
             '--batch-size', '128',
-            '--lr', '0.01',
+            '--lr', '0.0001',
             '--log-every', '50',
             '--eval-every', '100',
             '--out-dir', 'comparison_results',
