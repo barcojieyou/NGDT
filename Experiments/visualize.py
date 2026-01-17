@@ -76,6 +76,7 @@ class ExperimentVisualizer:
             except Exception as e:
                 print(f"Error loading {result_dir}: {e}")
         
+        self.data = dict(sorted(self.data.items()))
         print(f"Successfully loaded {len(self.data)} experiments")
     
     def _extract_summary(self, exp_id: str, step_df: pd.DataFrame, 
@@ -136,7 +137,7 @@ class ExperimentVisualizer:
         for exp_id, exp_data in self.data.items():
             method = exp_data['config']['method']
             color = method_colors[method]
-            alpha = 0.7
+            alpha = 1
             
             step_df = exp_data['step_df']
             epoch_df = exp_data['epoch_df']
@@ -175,34 +176,34 @@ class ExperimentVisualizer:
                 axes[1, 2].set_yscale('log')
         
         # Set titles and labels
-        axes[0, 0].set_title('Training Loss (Steps)')
+        axes[0, 0].set_title('a) Training Loss (Steps)')
         axes[0, 0].set_xlabel('Step')
         axes[0, 0].set_ylabel('Loss')
         axes[0, 0].set_yscale('log')
         axes[0, 0].grid(True, alpha=0.3)
         
-        axes[0, 1].set_title('Validation Accuracy (Epochs)')
+        axes[0, 1].set_title('b) Validation Accuracy (Epochs)')
         axes[0, 1].set_xlabel('Epoch')
         axes[0, 1].set_ylabel('Accuracy')
         axes[0, 1].grid(True, alpha=0.3)
         
-        axes[0, 2].set_title('Validation Loss (Epochs)')
+        axes[0, 2].set_title('c) Validation Loss (Epochs)')
         axes[0, 2].set_xlabel('Epoch')
         axes[0, 2].set_ylabel('Loss')
         axes[0, 2].set_yscale('log')
         axes[0, 2].grid(True, alpha=0.3)
         
-        axes[1, 0].set_title('Delta_F (Steps)')
+        axes[1, 0].set_title('d) Delta_F (Steps)')
         axes[1, 0].set_xlabel('Step')
         axes[1, 0].set_ylabel('Delta_F')
         axes[1, 0].grid(True, alpha=0.3)
         
-        axes[1, 1].set_title('Learning Rate (eta_t)')
+        axes[1, 1].set_title('e) Learning Rate (eta_t)')
         axes[1, 1].set_xlabel('Step')
         axes[1, 1].set_ylabel('Learning Rate')
         axes[1, 1].grid(True, alpha=0.3)
         
-        axes[1, 2].set_title('Gradient Norm (Steps)')
+        axes[1, 2].set_title('f) Gradient Norm (Steps)')
         axes[1, 2].set_xlabel('Step')
         axes[1, 2].set_ylabel('Gradient Norm')
         axes[1, 2].grid(True, alpha=0.3)
@@ -237,21 +238,21 @@ class ExperimentVisualizer:
         # Plot 1: Final validation accuracy by method
         if 'final_val_acc' in summary_df.columns:
             sns.boxplot(data=summary_df, x='method', y='final_val_acc', ax=axes[0, 0])
-            axes[0, 0].set_title('Final Validation Accuracy by Method')
+            axes[0, 0].set_title('a) Final Validation Accuracy by Method')
             axes[0, 0].set_ylabel('Accuracy')
             axes[0, 0].tick_params(axis='x', rotation=45)
         
         # Plot 2: Best validation accuracy by method
         if 'best_val_acc' in summary_df.columns:
             sns.boxplot(data=summary_df, x='method', y='best_val_acc', ax=axes[0, 1])
-            axes[0, 1].set_title('Best Validation Accuracy by Method')
+            axes[0, 1].set_title('b) Best Validation Accuracy by Method')
             axes[0, 1].set_ylabel('Best Accuracy')
             axes[0, 1].tick_params(axis='x', rotation=45)
         
         # Plot 3: Convergence speed
         if 'best_epoch' in summary_df.columns:
             sns.boxplot(data=summary_df, x='method', y='best_epoch', ax=axes[1, 0])
-            axes[1, 0].set_title('Convergence Speed (Epoch to Best Accuracy)')
+            axes[1, 0].set_title('c) Convergence Speed (Epoch to Best Accuracy)')
             axes[1, 0].set_ylabel('Epoch')
             axes[1, 0].tick_params(axis='x', rotation=45)
         
@@ -259,10 +260,10 @@ class ExperimentVisualizer:
         if 'avg_delta_f' in summary_df.columns:
             method_delta_f = summary_df.groupby('method')['avg_delta_f'].mean()
             axes[1, 1].bar(method_delta_f.index, method_delta_f.values)
-            axes[1, 1].set_title('Average Delta_F by Method')
+            axes[1, 1].set_title('d) Average Delta_F by Method')
             axes[1, 1].set_ylabel('Delta_F')
             axes[1, 1].tick_params(axis='x', rotation=45)
-            axes[1, 1].set_yscale('log')
+            #axes[1, 1].set_yscale('log')
         
         plt.suptitle('Method Comparison Summary', fontsize=16, y=1.02)
         plt.tight_layout()
